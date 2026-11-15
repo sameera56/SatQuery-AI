@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
+import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
 import path from 'path';
 import { promisify } from 'util';
 
@@ -12,6 +13,81 @@ export type Sector = 'government' | 'hack-query';
 export type WorkspaceDestination = '/' | '/government';
 type User = { id: string; name: string; email: string; passwordHash: string; sector: Sector; createdAt: string };
 export type SessionUser = Pick<User, 'id' | 'name' | 'email' | 'sector'>;
+
+export class AuthStorageConfigurationError extends Error {
+  constructor() {
+    super('Account storage is not configured. Connect a Neon database to this Vercel project.');
+    this.name = 'AuthStorageConfigurationError';
+  }
+}
+
+export class DuplicateAccountError extends Error {
+  constructor() {
+    super('An account already exists for this email.');
+    this.name = 'DuplicateAccountError';
+  }
+}
+
+function getDatabase() {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    if (process.env.NODE_ENV === 'production') throw new AuthStorageConfigurationError();
+    return null;
+  }
+  return neon(databaseUrl);
+}
+
+async function ensureUsersTable(sql: NeonQueryFunction<false, false>) {
+  await sql`
+    CREATE TABLE IF NOT EXISTS satquery_users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      sector TEXT NOT NULL CHECK (sector IN ('government', 'hack-query')),
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `;
+}
+
+async function findUserByEmail(email: string): Promise<User | null> {
+  const sql = getDatabase();
+  if (!sql) return (await readUsersFromFile()).find((user) => user.email === email) ?? null;
+  await ensureUsersTable(sql);
+  const rows = await sql`
+    SELECT id, name, email, password_hash AS "passwordHash", sector, created_at AS "createdAt"
+    FROM satquery_users WHERE email = ${email} LIMIT 1
+  `;
+  return (rows[0] as User | undefined) ?? null;
+}
+
+async function readUsersFromFile(): Promise<User[]> {
+  try { return JSON.parse(await readFile(USERS_PATH, 'utf8')) as User[]; }
+  catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+}
+
+async function insertUser(user: User) {
+  const sql = getDatabase();
+  if (!sql) {
+    const users = await readUsersFromFile();
+    if (users.some((candidate) => candidate.email === user.email)) throw new DuplicateAccountError();
+    await saveUsers([...users, user]);
+    return;
+  }
+
+  await ensureUsersTable(sql);
+  try {
+    await sql`
+      INSERT INTO satquery_users (id, name, email, password_hash, sector, created_at)
+      VALUES (${user.id}, ${user.name}, ${user.email}, ${user.passwordHash}, ${user.sector}, ${user.createdAt})
+    `;
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {
+      throw new DuplicateAccountError();
+    }
+    throw error;
+  }
+}
 
 /**
  * Keep post-authentication routing in one typed place. The standalone Simple
@@ -36,11 +112,6 @@ export function isExpertEmailApproved(email: string) {
   return approved.includes(email.trim().toLowerCase());
 }
 
-async function readUsers(): Promise<User[]> {
-  try { return JSON.parse(await readFile(USERS_PATH, 'utf8')) as User[]; }
-  catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
-}
-
 async function saveUsers(users: User[]) {
   await mkdir(path.dirname(USERS_PATH), { recursive: true });
   await writeFile(USERS_PATH, JSON.stringify(users, null, 2), { encoding: 'utf8', mode: 0o600 });
@@ -61,16 +132,14 @@ async function passwordsMatch(password: string, stored: string) {
 }
 
 export async function registerUser(input: { name: string; email: string; password: string; sector: Sector }): Promise<SessionUser> {
-  const users = await readUsers();
   const email = input.email.trim().toLowerCase();
-  if (users.some((user) => user.email === email)) throw new Error('An account already exists for this email.');
   const user: User = { id: randomBytes(18).toString('hex'), name: input.name.trim(), email, passwordHash: await hashPassword(input.password), sector: input.sector, createdAt: new Date().toISOString() };
-  await saveUsers([...users, user]);
+  await insertUser(user);
   return { id: user.id, name: user.name, email: user.email, sector: user.sector };
 }
 
 export async function authenticateUser(email: string, password: string): Promise<SessionUser | null> {
-  const user = (await readUsers()).find((candidate) => candidate.email === email.trim().toLowerCase());
+  const user = await findUserByEmail(email.trim().toLowerCase());
   if (!user || !(await passwordsMatch(password, user.passwordHash))) return null;
   return { id: user.id, name: user.name, email: user.email, sector: user.sector };
 }

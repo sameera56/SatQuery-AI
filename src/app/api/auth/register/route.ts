@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSession, isExpertEmailApproved, registerUser, SESSION_COOKIE, type Sector, workspaceDestination } from '@/lib/auth';
+import { AuthStorageConfigurationError, createSession, DuplicateAccountError, isExpertEmailApproved, registerUser, SESSION_COOKIE, type Sector, workspaceDestination } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,5 +10,10 @@ export async function POST(request: NextRequest) {
     const response = NextResponse.json({ user, destination: workspaceDestination(user.sector) }, { status: 201 });
     response.cookies.set(SESSION_COOKIE, createSession(user), { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 7 });
     return response;
-  } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Could not create account.' }, { status: 400 }); }
+  } catch (error) {
+    if (error instanceof DuplicateAccountError) return NextResponse.json({ error: error.message }, { status: 409 });
+    if (error instanceof AuthStorageConfigurationError) return NextResponse.json({ error: error.message }, { status: 503 });
+    console.error('Could not create SATQUERY account:', error);
+    return NextResponse.json({ error: 'Could not create account. Please try again later.' }, { status: 500 });
+  }
 }

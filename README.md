@@ -255,6 +255,14 @@ AIS_API_KEY=                 # aisstream.io maritime
 > Without `SCANNER_URL`/`SCANNER_KEY` the RECON toolkit returns `503`; every
 > other layer works out of the box. `.env` is gitignored — only the template is committed.
 
+### SATQUERY account storage on Vercel
+
+Account records require persistent Postgres storage in production. Connect a
+Neon database to the Vercel project so `DATABASE_URL` is available to the
+Production and Preview environments. Local development uses
+`data/satquery-users.json` only when `DATABASE_URL` is not set; Vercel's
+read-only application filesystem is never used for account writes.
+
 ---
 
 ## Tech Stack
