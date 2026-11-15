@@ -16,12 +16,9 @@ const nextConfig: NextConfig = {
   // The QR report is opened on a phone via the laptop's Wi-Fi address during
   // demos. Next dev otherwise blocks its own client resources for that host.
   allowedDevOrigins: lanDevOrigins(),
-  // The workspace is synced by OneDrive. Its Files On-Demand placeholder
-  // metadata can turn `.next/node_modules` into a protected reparse point,
-  // which prevents both `next dev` and `next build` from replacing it. Keep
-  // generated output in a separate, ordinary directory (and allow CI to
-  // override it when desired).
-  distDir: process.env.NEXT_DIST_DIR || '.next-osiris',
+  // Keep local output outside OneDrive's protected `.next` path. Vercel expects
+  // Next.js output in its default `.next` directory.
+  distDir: process.env.NEXT_DIST_DIR || (process.env.VERCEL ? '.next' : '.next-osiris'),
   // A separate lockfile exists higher in the local workspace. Pinning this
   // prevents Turbopack from treating that parent directory as this app's root.
   turbopack: {
