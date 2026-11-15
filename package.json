@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack --hostname 0.0.0.0",
+    "clean:next": "node -e \"const fs=require('fs'); const path=require('path'); ['.next','.next-osiris'].forEach((dir)=>{const target=path.join(process.cwd(), dir); try { fs.rmSync(target, { recursive: true, force: true }); } catch (error) { console.warn('[clean:next] could not remove ' + dir + ':', error.message); } });\"",
+    "dev": "npm run clean:next && next dev --webpack --hostname 0.0.0.0",
     "voice": "python -m uvicorn server:app --app-dir voice --host 127.0.0.1 --port 8000",
-    "build": "next build",
+    "build": "npm run clean:next && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
